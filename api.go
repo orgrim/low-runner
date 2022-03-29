@@ -30,128 +30,112 @@ func xactToApiXact(x xact) apiXact {
 	for _, s := range x.Statements {
 		stmts = append(stmts, s.Text)
 	}
-	ax.Statements = stmts
 
+	ax.Statements = stmts
 	return ax
 }
 
 // Wrapper to call a hanlder with a job list a parameter
-func apiXactWrapHandler(uf func(echo.Context, map[string]xact) error, jobs map[string]xact) echo.HandlerFunc {
+func apiXactWrapHandler(uf func(echo.Context, runInfo) error, jobs runInfo) echo.HandlerFunc {
 	return func(c echo.Context) error { return uf(c, jobs) }
 }
 
-func getXact(c echo.Context, jobs map[string]xact) error {
+func getXact(c echo.Context, jobs runInfo) error {
 	id := c.Param("id")
-
-	x, ok := jobs[id]
-	if !ok {
-		return c.JSON(http.StatusNotFound, apiError{"xact not found in current job list"})
+	x, err := jobs.get(id)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, apiError{err.Error()})
 	}
 
 	return c.JSON(http.StatusOK, xactToApiXact(x))
 }
 
-func getAllXacts(c echo.Context, jobs map[string]xact) error {
+func getAllXacts(c echo.Context, jobs runInfo) error {
 	axs := make(map[string]apiXact)
-	for k, x := range jobs {
+	for k, x := range jobs.xacts {
 		axs[k] = xactToApiXact(x)
 	}
 
 	return c.JSON(http.StatusOK, axs)
 }
 
-func addXact(c echo.Context, jobs map[string]xact) error {
+func addXact(c echo.Context, jobs runInfo) error {
 	ax := apiXact{}
 	if err := c.Bind(&ax); err != nil {
 		return c.JSON(http.StatusBadRequest, apiError{"missing or malformed payload"})
 	}
 
 	x := newXact(ax.Statements)
-
-	_, ko := jobs[x.Id]
-	if ko {
-		return c.JSON(http.StatusConflict, apiError{"xact already exists in current job list"})
+	if err := jobs.add(x); err != nil {
+		return c.JSON(http.StatusConflict, apiError{err.Error()})
 	}
-
-	jobs[x.Id] = x
 
 	ax.Id = x.Id
 
 	return c.JSON(http.StatusCreated, ax)
 }
 
-func updateXact(c echo.Context, jobs map[string]xact) error {
+func updateXact(c echo.Context, jobs runInfo) error {
 	id := c.Param("id")
-
-	x, ok := jobs[id]
-	if !ok {
-		return c.JSON(http.StatusNotFound, apiError{"xact not found in current job list"})
-	}
 
 	ax := apiXact{}
 	if err := c.Bind(&ax); err != nil {
 		return c.JSON(http.StatusBadRequest, apiError{"missing or malformed payload"})
 	}
 
-	for _, s := range ax.Statements {
-		x.Statements = append(x.Statements, stmt{Text: s})
+	x := newXact(ax.Statements)
+	newX, err := jobs.appendXact(id, x)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, apiError{err.Error()})
 	}
 
-	jobs[x.Id] = x
-
-	return c.JSON(http.StatusOK, xactToApiXact(x))
+	return c.JSON(http.StatusOK, xactToApiXact(newX))
 }
 
-func replaceXact(c echo.Context, jobs map[string]xact) error {
+func replaceXact(c echo.Context, jobs runInfo) error {
 	id := c.Param("id")
-
-	x, ok := jobs[id]
-	if !ok {
-		return c.JSON(http.StatusNotFound, apiError{"xact not found in current job list"})
-	}
 
 	ax := apiXact{}
 	if err := c.Bind(&ax); err != nil {
 		return c.JSON(http.StatusBadRequest, apiError{"missing or malformed payload"})
 	}
 
-	delete(jobs, id)
+	if err := jobs.remove(id); err != nil {
+		return c.JSON(http.StatusNotFound, apiError{err.Error()})
+	}
 
-	x = newXact(ax.Statements)
-
-	jobs[x.Id] = x
+	x := newXact(ax.Statements)
+	if err := jobs.add(x); err != nil {
+		return c.JSON(http.StatusBadRequest, apiError{err.Error()})
+	}
 
 	// Id has changed since statements have changed
 	ax.Id = x.Id
 	return c.JSON(http.StatusOK, ax)
 }
 
-func removeXact(c echo.Context, jobs map[string]xact) error {
+func removeXact(c echo.Context, jobs runInfo) error {
 	id := c.Param("id")
-
-	_, ok := jobs[id]
-	if !ok {
-		return c.JSON(http.StatusNotFound, apiError{"xact not found in current job list"})
+	if err := jobs.remove(id); err != nil {
+		return c.JSON(http.StatusNotFound, apiError{err.Error()})
 	}
-
-	delete(jobs, id)
 
 	return c.JSON(http.StatusOK, struct{}{})
 }
 
 // Wrapper to call a hanlder with a job list a parameter
-func apiWorkWrapHandler(uf func(echo.Context, chan work) error, ctrl chan work) echo.HandlerFunc {
+func apiWorkWrapHandler(uf func(echo.Context, chan ctrlData) error, ctrl chan ctrlData) echo.HandlerFunc {
 	return func(c echo.Context) error { return uf(c, ctrl) }
 }
 
-func updateWork(c echo.Context, ctrl chan work) error {
+func updateWork(c echo.Context, ctrl chan ctrlData) error {
 	aw := apiWork{}
 	if err := c.Bind(&aw); err != nil {
 		log.Println("could not bind input:", err)
 		return c.JSON(http.StatusBadRequest, apiError{"missing or malformed payload"})
 	}
 
-	w := work{
+	w := ctrlData{
 		workers: aw.Workers,
 		pause:   aw.Pause,
 	}
@@ -170,7 +154,7 @@ func updateWork(c echo.Context, ctrl chan work) error {
 
 }
 
-func runApi(jobs map[string]xact, ctrl chan work) {
+func runApi(jobs runInfo, ctrl chan ctrlData) {
 	e := echo.New()
 
 	// Middleware

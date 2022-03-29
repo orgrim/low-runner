@@ -205,3 +205,17 @@ func runStatement(s stmt, tx pgx.Tx) (stmtResult, error) {
 
 	return res, nil
 }
+
+func setupPG(connstring string) (*pgxpool.Pool, error) {
+	config, err := pgxpool.ParseConfig(connstring)
+	if err != nil {
+		return nil, err
+	}
+
+	conn, err := pgxpool.ConnectConfig(context.Background(), config)
+	if err != nil {
+		return nil, err
+	}
+
+	return conn, nil
+}

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"context"
+	"fmt"
 	"github.com/jackc/pgx/v4/pgxpool"
 	"log"
 	"os"
@@ -9,33 +9,14 @@ import (
 	"time"
 )
 
-func setupPG(connstring string) (*pgxpool.Pool, error) {
-	config, err := pgxpool.ParseConfig(connstring)
-	if err != nil {
-		return nil, err
-	}
-
-	conn, err := pgxpool.ConnectConfig(context.Background(), config)
-	if err != nil {
-		return nil, err
-	}
-
-	return conn, nil
-}
-
 func main() {
 	p, err := setupPG(os.Getenv("LR_DB_URL"))
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	xacts := []xact{defaultXact(), pgbenchXact(1)}
-	jobs := make(map[string]xact)
-	control := make(chan work)
-
-	for _, x := range xacts {
-		jobs[x.Id] = x
-	}
+	jobs := newRunInfo([]xact{defaultXact(), pgbenchXact(1)})
+	control := make(chan ctrlData)
 
 	go dispatch(p, jobs, 1, control)
 
@@ -44,14 +25,90 @@ func main() {
 	p.Close()
 }
 
-type work struct {
+type ctrlData struct {
 	workers   int
 	frequency time.Duration
 	pause     bool
 }
 
+type runInfo struct {
+	m     *sync.Mutex
+	xacts map[string]xact
+}
+
+func newRunInfo(xactList []xact) runInfo {
+	r := runInfo{
+		m:     &sync.Mutex{},
+		xacts: make(map[string]xact),
+	}
+
+	for _, x := range xactList {
+		r.xacts[x.Id] = x
+	}
+
+	return r
+}
+
+func (r runInfo) get(xid string) (xact, error) {
+	x, ok := r.xacts[xid]
+	if !ok {
+		return xact{}, fmt.Errorf("xact not found in run list")
+	}
+
+	return x, nil
+}
+
+func (r runInfo) add(x xact) error {
+	_, ko := r.xacts[x.Id]
+	if ko {
+		return fmt.Errorf("xact already exists in run list")
+	}
+
+	r.m.Lock()
+	r.xacts[x.Id] = x
+	r.m.Unlock()
+
+	return nil
+}
+
+func (r runInfo) remove(xid string) error {
+	_, ok := r.xacts[xid]
+	if !ok {
+		return fmt.Errorf("xact not found in run list")
+	}
+
+	r.m.Lock()
+	delete(r.xacts, xid)
+	r.m.Unlock()
+
+	return nil
+}
+
+func (r runInfo) appendXact(xid string, x xact) (xact, error) {
+	cur, ok := r.xacts[xid]
+	if !ok {
+		return xact{}, fmt.Errorf("xact not found in run list")
+	}
+
+	for _, s := range x.Statements {
+		cur.Statements = append(cur.Statements, s)
+	}
+
+	// When the list of statements is changed, the source and id of the
+	// xact must be updated
+	cur.genSource()
+
+	// As the id changes, the old key must be removed and a new one created
+	r.m.Lock()
+	delete(r.xacts, xid)
+	r.xacts[cur.Id] = cur
+	r.m.Unlock()
+
+	return cur, nil
+}
+
 // Keep a list of xact to run on the workers and schedule runs
-func dispatch(pool *pgxpool.Pool, jobs map[string]xact, numWorker int, ctrl chan work) {
+func dispatch(pool *pgxpool.Pool, jobs runInfo, numWorker int, ctrl chan ctrlData) {
 	if numWorker < 1 {
 		log.Println("bad param for dispatch, workers:", numWorker)
 		return
@@ -68,7 +125,7 @@ func dispatch(pool *pgxpool.Pool, jobs map[string]xact, numWorker int, ctrl chan
 	for {
 		if !pause {
 			// log.Println("scheduling run")
-			for _, v := range jobs {
+			for _, v := range jobs.xacts {
 				for i := 0; i < numWorker; i++ {
 					go worker(pool, v, wg, res)
 				}
