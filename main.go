@@ -159,6 +159,15 @@ func dispatch(pool *pgxpool.Pool, jobs runInfo, numWorker int, ctrl chan ctrlDat
 				if todo.workers > 0 {
 					log.Printf("will spawn %d workers from now on", todo.workers)
 					numWorker = todo.workers
+
+					if pool.Config().MaxConns != int32(numWorker) {
+						log.Println("reconnecting to adapt pool size")
+						var err error
+						pool, err = updatePoolConfig(pool, numWorker)
+						if err != nil {
+							log.Println(err)
+						}
+					}
 				}
 
 				if todo.frequency > 0 {

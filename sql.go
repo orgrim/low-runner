@@ -219,3 +219,16 @@ func setupPG(connstring string) (*pgxpool.Pool, error) {
 
 	return conn, nil
 }
+
+func updatePoolConfig(pool *pgxpool.Pool, maxConns int) (*pgxpool.Pool, error) {
+	if maxConns < 1 {
+		return nil, fmt.Errorf("new pool size is too small")
+	}
+
+	config := pool.Config()
+	config.MaxConns = int32(maxConns)
+
+	pool.Close()
+
+	return pgxpool.ConnectConfig(context.Background(), config)
+}
