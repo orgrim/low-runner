@@ -154,7 +154,7 @@ func updateWork(c echo.Context, ctrl chan ctrlData) error {
 
 }
 
-func runApi(jobs runInfo, ctrl chan ctrlData) {
+func runApi(todo run, ctrl chan ctrlData) {
 	e := echo.New()
 
 	// Middleware
@@ -162,6 +162,8 @@ func runApi(jobs runInfo, ctrl chan ctrlData) {
 		Format: "${time_rfc3339} ${remote_ip} ${latency_human} ${method} ${uri} ${status} ${error}\n",
 	}))
 	e.Use(middleware.Recover())
+
+	jobs := todo.work
 
 	// Routes
 	e.GET("/v1/xacts", apiXactWrapHandler(getAllXacts, jobs))
