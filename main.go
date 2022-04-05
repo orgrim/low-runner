@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/spf13/pflag"
 	"log"
@@ -34,8 +35,6 @@ func processCli(args []string) config {
 	pflag.StringVarP(&opts.connstring, "db-url", "d", "", "connection string to PostgreSQL (LOWRUNNER_DB_URL)\n")
 	pflag.BoolVar(&showHelp, "help", false, "print usage")
 	pflag.BoolVar(&showVersion, "version", false, "print version\n")
-
-	pflag.CommandLine.MarkHidden("work-file")
 
 	pflag.CommandLine.Parse(args)
 
@@ -73,17 +72,28 @@ func processCli(args []string) config {
 }
 
 func loadWorkFromFile(path string) (run, error) {
-	return run{}, fmt.Errorf("not implemented")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return run{}, fmt.Errorf("could not load file %s: %w", path, err)
+	}
+
+	var r run
+	err = json.Unmarshal(data, &r)
+	if err != nil {
+		return run{}, fmt.Errorf("could not parse JSON from %s: %w", path, err)
+	}
+
+	return r, nil
 }
 
 func defaulWork() run {
 	return run{
-		schedule: ctrlData{
-			workers:   1,
-			frequency: time.Second,
-			pause:     false,
+		Schedule: ctrlData{
+			Workers:   1,
+			Frequency: time.Second,
+			Pause:     false,
 		},
-		work: newRunInfo([]xact{defaultXact()}),
+		Work: newRunInfo([]xact{defaultXact()}),
 	}
 }
 
@@ -95,16 +105,22 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	work, err := loadWorkFromFile(opts.workFilePath)
-	if err != nil {
+	var work run
+	if opts.workFilePath != "" {
+		work, err = loadWorkFromFile(opts.workFilePath)
+		if err != nil {
+			log.Println(err)
+			work = defaulWork()
+		}
+	} else {
 		work = defaulWork()
 	}
 
 	control := make(chan ctrlData)
 
-	go dispatch(p, work, control)
+	go dispatch(p, &work, control)
 
-	runApi(opts.apiListenAddr, work, control)
+	runApi(opts.apiListenAddr, &work, control)
 
 	p.Close()
 }

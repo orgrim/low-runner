@@ -1,12 +1,11 @@
 package main
 
 import (
-	"net/http"
-
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"log"
-	"time"
+	"net/http"
+	"sync"
 )
 
 type apiXact struct {
@@ -18,14 +17,8 @@ type apiError struct {
 	Error string `json:"error"`
 }
 
-type apiWork struct {
-	Workers   int    `json:"workers"`
-	Frequency string `json:"frequency"`
-	Pause     bool   `json:"pause"`
-}
-
 func xactToApiXact(x xact) apiXact {
-	ax := apiXact{Id: x.Id}
+	ax := apiXact{Id: x.id}
 	stmts := make([]string, 0)
 	for _, s := range x.Statements {
 		stmts = append(stmts, s.Text)
@@ -52,7 +45,7 @@ func getXact(c echo.Context, jobs runInfo) error {
 
 func getAllXacts(c echo.Context, jobs runInfo) error {
 	axs := make(map[string]apiXact)
-	for k, x := range jobs.xacts {
+	for k, x := range jobs.Xacts {
 		axs[k] = xactToApiXact(x)
 	}
 
@@ -70,7 +63,7 @@ func addXact(c echo.Context, jobs runInfo) error {
 		return c.JSON(http.StatusConflict, apiError{err.Error()})
 	}
 
-	ax.Id = x.Id
+	ax.Id = x.id
 
 	return c.JSON(http.StatusCreated, ax)
 }
@@ -110,7 +103,7 @@ func replaceXact(c echo.Context, jobs runInfo) error {
 	}
 
 	// Id has changed since statements have changed
-	ax.Id = x.Id
+	ax.Id = x.id
 	return c.JSON(http.StatusOK, ax)
 }
 
@@ -129,23 +122,10 @@ func apiWorkWrapHandler(uf func(echo.Context, chan ctrlData) error, ctrl chan ct
 }
 
 func updateWork(c echo.Context, ctrl chan ctrlData) error {
-	aw := apiWork{}
-	if err := c.Bind(&aw); err != nil {
+	w := ctrlData{}
+	if err := c.Bind(&w); err != nil {
 		log.Println("could not bind input:", err)
 		return c.JSON(http.StatusBadRequest, apiError{"missing or malformed payload"})
-	}
-
-	w := ctrlData{
-		workers: aw.Workers,
-		pause:   aw.Pause,
-	}
-
-	if aw.Frequency != "" {
-		f, err := time.ParseDuration(aw.Frequency)
-		if err != nil {
-			return c.JSON(http.StatusBadRequest, apiError{"missing or malformed payload"})
-		}
-		w.frequency = f
 	}
 
 	ctrl <- w
@@ -154,7 +134,25 @@ func updateWork(c echo.Context, ctrl chan ctrlData) error {
 
 }
 
-func runApi(hostPort string, todo run, ctrl chan ctrlData) {
+func dumpRun(c echo.Context, r *run) error {
+	return c.JSON(http.StatusOK, r)
+}
+
+func loadRun(c echo.Context, r *run, mx *sync.Mutex) error {
+	newr := run{}
+	if err := c.Bind(&newr); err != nil {
+		log.Println("could not bind input:", err)
+		return c.JSON(http.StatusBadRequest, apiError{"missing or malformed payload"})
+	}
+
+	mx.Lock()
+	*r = newr
+	mx.Unlock()
+
+	return c.JSON(http.StatusOK, r)
+}
+
+func runApi(hostPort string, todo *run, ctrl chan ctrlData) {
 	e := echo.New()
 
 	// Middleware
@@ -163,7 +161,8 @@ func runApi(hostPort string, todo run, ctrl chan ctrlData) {
 	}))
 	e.Use(middleware.Recover())
 
-	jobs := todo.work
+	jobs := todo.Work
+	mx := &sync.Mutex{}
 
 	// Routes
 	e.GET("/v1/xacts", apiXactWrapHandler(getAllXacts, jobs))
@@ -174,6 +173,9 @@ func runApi(hostPort string, todo run, ctrl chan ctrlData) {
 	e.DELETE("/v1/xacts/:id", apiXactWrapHandler(removeXact, jobs))
 
 	e.POST("/v1/schedule", apiWorkWrapHandler(updateWork, ctrl))
+
+	e.GET("/v1/run", func(c echo.Context) error { return dumpRun(c, todo) })
+	e.POST("/v1/run", func(c echo.Context) error { return loadRun(c, todo, mx) })
 
 	// Start server
 	e.Logger.Fatal(e.Start(hostPort))

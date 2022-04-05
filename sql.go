@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha1"
+	"encoding/json"
 	"fmt"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
@@ -23,21 +24,60 @@ const (
 type xact struct {
 	// Unique identifier that permits to link results with the job and
 	// access it from the REST API
-	Id string
+	id string
 
 	// Plain SQL text to run
-	Source string
+	source string
 
 	// List of individual SQL statements
-	Statements []stmt
+	Statements []stmt `json:"statements"`
 
 	// Expected outcome of the transation
-	Outcome xactOutcome
+	Outcome xactOutcome `json:"outcome"`
+}
+
+func (x xact) MarshalJSON() ([]byte, error) {
+	m := struct {
+		Outcome xactOutcome `json:"outcome"`
+		Sql     []string    `json:"statements"`
+	}{
+		Outcome: x.Outcome,
+		Sql:     make([]string, 0, len(x.Statements)),
+	}
+
+	for _, s := range x.Statements {
+		m.Sql = append(m.Sql, s.Text)
+	}
+
+	return json.Marshal(m)
+}
+
+func (x *xact) UnmarshalJSON(data []byte) error {
+	var m struct {
+		Outcome xactOutcome `json:"outcome"`
+		Sql     []string    `json:"statements"`
+	}
+
+	err := json.Unmarshal(data, &m)
+	if err != nil {
+		return err
+	}
+
+	x.Outcome = m.Outcome
+	x.Statements = make([]stmt, 0, len(m.Sql))
+
+	for _, v := range m.Sql {
+		x.Statements = append(x.Statements, stmt{Text: v})
+	}
+
+	x.genSource()
+
+	return nil
 }
 
 type stmt struct {
-	Id   string
-	Text string
+	id   string
+	Text string `json:"sql"`
 }
 
 func defaultXact() xact {
@@ -108,8 +148,8 @@ func (x *xact) genSource() {
 
 	src = fmt.Sprintf("%s\n%s;", src, strings.ToUpper(string(x.Outcome)))
 
-	x.Source = src
-	x.Id = fmt.Sprintf("%x", sha1.Sum([]byte(src)))
+	x.source = src
+	x.id = fmt.Sprintf("%x", sha1.Sum([]byte(src)))
 }
 
 type xactResult struct {
@@ -139,7 +179,7 @@ type stmtResult struct {
 
 func runXact(x xact, pool *pgxpool.Pool) (xactResult, error) {
 	res := xactResult{
-		xactId:    x.Id,
+		xactId:    x.id,
 		startTime: time.Now(),
 	}
 
@@ -181,7 +221,7 @@ func runXact(x xact, pool *pgxpool.Pool) (xactResult, error) {
 
 func runStatement(s stmt, tx pgx.Tx) (stmtResult, error) {
 	res := stmtResult{
-		stmtId:    s.Id,
+		stmtId:    s.id,
 		startTime: time.Now(),
 	}
 
