@@ -154,7 +154,7 @@ func updateWork(c echo.Context, ctrl chan ctrlData) error {
 
 }
 
-func runApi(todo run, ctrl chan ctrlData) {
+func runApi(hostPort string, todo run, ctrl chan ctrlData) {
 	e := echo.New()
 
 	// Middleware
@@ -176,5 +176,5 @@ func runApi(todo run, ctrl chan ctrlData) {
 	e.POST("/v1/schedule", apiWorkWrapHandler(updateWork, ctrl))
 
 	// Start server
-	e.Logger.Fatal(e.Start(":1323"))
+	e.Logger.Fatal(e.Start(hostPort))
 }
