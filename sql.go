@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
+	"log"
 	"strings"
 	"time"
 )
@@ -14,7 +15,8 @@ import (
 type xactOutcome string
 
 const (
-	Commit   xactOutcome = "commit"
+	NotRun   xactOutcome = "notrun"
+	Commit               = "commit"
 	Rollback             = "rollback"
 	Idle                 = "idle"
 )
@@ -181,10 +183,14 @@ func runXact(x xact, pool *pgxpool.Pool) (xactResult, error) {
 	res := xactResult{
 		xactId:    x.id,
 		startTime: time.Now(),
+		outcome:   Rollback,
 	}
 
-	// We get a connection from the pool with a context that wait forever
-	conn, err := pool.Acquire(context.Background())
+	// We want to get a connection within 5 seconds
+	ctxTimeout, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := pool.Acquire(ctxTimeout)
 	if err != nil {
 		return res, err
 	}
@@ -202,7 +208,7 @@ func runXact(x xact, pool *pgxpool.Pool) (xactResult, error) {
 	res.outcome = Commit
 	for _, s := range x.Statements {
 		if _, err := runStatement(s, tx); err != nil {
-			// XXX log something
+			log.Printf("xact=%s rollbacked: %s", x.id, err)
 			res.outcome = Rollback
 		}
 	}
@@ -246,11 +252,13 @@ func runStatement(s stmt, tx pgx.Tx) (stmtResult, error) {
 	return res, nil
 }
 
-func setupPG(connstring string) (*pgxpool.Pool, error) {
+func setupPG(connstring string, lazyConnect bool) (*pgxpool.Pool, error) {
 	config, err := pgxpool.ParseConfig(connstring)
 	if err != nil {
 		return nil, err
 	}
+
+	config.LazyConnect = lazyConnect
 
 	conn, err := pgxpool.ConnectConfig(context.Background(), config)
 	if err != nil {

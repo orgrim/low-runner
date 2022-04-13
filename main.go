@@ -15,6 +15,7 @@ type config struct {
 	apiListenAddr string
 	workFilePath  string
 	connstring    string
+	lazyConnect   bool
 }
 
 func processCli(args []string) config {
@@ -32,7 +33,8 @@ func processCli(args []string) config {
 
 	pflag.StringVarP(&opts.apiListenAddr, "api-listen-addr", "l", ":1323", "listen address and port of the REST API (LOWRUNNER_API_LISTEN_ADDR)")
 	pflag.StringVarP(&opts.workFilePath, "work-file", "f", "", "path to a JSON file storing xacts to run at startup (LOWRUNNER_WORK_FILE)")
-	pflag.StringVarP(&opts.connstring, "db-url", "d", "", "connection string to PostgreSQL (LOWRUNNER_DB_URL)\n")
+	pflag.StringVarP(&opts.connstring, "db-url", "d", "", "connection string to PostgreSQL (LOWRUNNER_DB_URL)")
+	pflag.BoolVar(&opts.lazyConnect, "lazy-connect", false, "do not connect immediatly (LOWRUNNER_LAZY_CONNECT)\n")
 	pflag.BoolVar(&showHelp, "help", false, "print usage")
 	pflag.BoolVar(&showVersion, "version", false, "print version\n")
 
@@ -64,6 +66,13 @@ func processCli(args []string) config {
 			envValue := os.Getenv("LOWRUNNER_DB_URL")
 			if !f.Changed && envValue != "" {
 				opts.connstring = envValue
+			}
+		case "lazy-connect":
+			envValue := os.Getenv("LOWRUNNER_LAZY_CONNECT")
+			if !f.Changed && envValue != "" {
+				if envValue != "no" && envValue != "false" && envValue != "0" {
+					opts.lazyConnect = true
+				}
 			}
 		}
 	})
@@ -100,7 +109,7 @@ func defaulWork() run {
 func main() {
 	opts := processCli(os.Args[1:])
 
-	p, err := setupPG(opts.connstring)
+	p, err := setupPG(opts.connstring, opts.lazyConnect)
 	if err != nil {
 		log.Fatalln(err)
 	}
