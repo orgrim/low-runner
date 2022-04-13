@@ -1,7 +1,7 @@
 PROG=low-runner
 LDFLAGS=-ldflags="-s -w"
 
-TAG?=$(shell git tag -l 'v*' | sort -V | tail -1)
+TAG?=$(shell git tag -l 'v*' | sort -V | tail -1 | sed -e s,^v,,)
 REGISTRY?=orgrim
 IMAGE?=low-runner
 
