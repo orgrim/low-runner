@@ -198,7 +198,7 @@ func runXact(x xact, pool *pgxpool.Pool) (xactResult, error) {
 	defer conn.Release()
 
 	// Start the transaction and record the time after we got an answer
-	tx, err := conn.Begin(context.Background())
+	tx, err := conn.Begin(ctxTimeout)
 	if err != nil {
 		return res, err
 	}
@@ -215,9 +215,9 @@ func runXact(x xact, pool *pgxpool.Pool) (xactResult, error) {
 
 	switch res.outcome {
 	case Commit:
-		tx.Commit(context.Background())
+		tx.Commit(ctxTimeout)
 	case Rollback:
-		tx.Rollback(context.Background())
+		tx.Rollback(ctxTimeout)
 	}
 
 	res.endTime = time.Now()
@@ -231,7 +231,10 @@ func runStatement(s stmt, tx pgx.Tx) (stmtResult, error) {
 		startTime: time.Now(),
 	}
 
-	rows, err := tx.Query(context.Background(), s.Text)
+	ctxTimeout, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	rows, err := tx.Query(ctxTimeout, s.Text)
 	if err != nil {
 		res.failed = true
 		res.stopTime = time.Now()
