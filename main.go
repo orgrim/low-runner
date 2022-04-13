@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-var version string = "0.2.0"
+var version string = "0.2.1"
 
 type config struct {
 	apiListenAddr string
