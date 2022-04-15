@@ -177,22 +177,27 @@ func removeXact(c echo.Context, jobs runInfo) error {
 	return c.JSON(http.StatusOK, struct{}{})
 }
 
-// Wrapper to call a hanlder with a job list a parameter
-func apiWorkWrapHandler(uf func(echo.Context, chan ctrlData) error, ctrl chan ctrlData) echo.HandlerFunc {
-	return func(c echo.Context) error { return uf(c, ctrl) }
-}
-
-func updateWork(c echo.Context, ctrl chan ctrlData) error {
-	w := ctrlData{}
+func updateSchedule(c echo.Context, r *run, ctrl chan struct{}) error {
+	w := apiSchedule{}
 	if err := c.Bind(&w); err != nil {
 		log.Println("could not bind input:", err)
 		return c.JSON(http.StatusBadRequest, apiError{"missing or malformed payload"})
 	}
 
-	ctrl <- w
+	s, err := apiScheduleToSchedule(w)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, apiError{fmt.Sprintf("malformed payload: %s", err)})
+	}
+
+	r.m.Lock()
+	r.Schedule = s
+	r.m.Unlock()
+
+	// signal the dispatch that the schedule changed, to make it avoid
+	// check it every loop
+	ctrl <- struct{}{}
 
 	return c.JSON(http.StatusOK, struct{}{})
-
 }
 
 func dumpRun(c echo.Context, r *run) error {
@@ -225,7 +230,7 @@ func loadRun(c echo.Context, r *run, ctrl chan struct{}) error {
 	return c.JSON(http.StatusOK, r)
 }
 
-func runApi(hostPort string, todo *run, ctrl chan ctrlData) {
+func runApi(hostPort string, todo *run, ctrl chan struct{}) {
 	e := echo.New()
 
 	// Middleware
@@ -244,7 +249,7 @@ func runApi(hostPort string, todo *run, ctrl chan ctrlData) {
 	e.PUT("/v1/xacts/:id", apiXactWrapHandler(replaceXact, jobs))
 	e.DELETE("/v1/xacts/:id", apiXactWrapHandler(removeXact, jobs))
 
-	e.POST("/v1/schedule", apiWorkWrapHandler(updateWork, ctrl))
+	e.POST("/v1/schedule", func(c echo.Context) error { return updateSchedule(c, todo, ctrl) })
 
 	e.GET("/v1/run", func(c echo.Context) error { return dumpRun(c, todo) })
 	e.POST("/v1/run", func(c echo.Context) error { return loadRun(c, todo, ctrl) })

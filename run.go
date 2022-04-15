@@ -191,22 +191,25 @@ func (r runInfo) appendXact(xid string, x xact) (xact, error) {
 }
 
 // Keep a list of xact to run on the workers and schedule runs
-func dispatch(pool *pgxpool.Pool, todo *run, ctrl chan ctrlData) {
+func dispatch(pool *pgxpool.Pool, todo *run, ctrl chan struct{}) {
 	numWorker := todo.Schedule.Workers
 	if numWorker < 1 {
 		log.Println("bad param for dispatch, workers:", numWorker)
 		return
 	}
 
+	frequency := todo.Schedule.Frequency
+	pause := false
+
 	res := make(chan xactResult)
 	wg := &sync.WaitGroup{}
 	done := make(chan struct{})
-	tick := time.NewTicker(todo.Schedule.Frequency)
-	pause := false
+	tick := time.NewTicker(frequency)
 
 	go gather(res)
 
 	for {
+		// launch workers
 		if !pause {
 			todo.m.RLock()
 			for _, v := range todo.Work.Xacts {
@@ -239,11 +242,12 @@ func dispatch(pool *pgxpool.Pool, todo *run, ctrl chan ctrlData) {
 					break out
 				}
 
-			case newSched := <-ctrl:
-				log.Println("received work update")
-				if newSched.Workers > 0 {
-					log.Printf("will spawn %d workers from now on", newSched.Workers)
-					numWorker = newSched.Workers
+			case <-ctrl:
+				// process change in schedule
+				todo.m.RLock()
+				if numWorker != todo.Schedule.Workers {
+					log.Printf("will spawn %d workers from now on", todo.Schedule.Workers)
+					numWorker = todo.Schedule.Workers
 
 					if pool.Config().MaxConns != int32(numWorker) {
 						log.Println("reconnecting to adapt pool size")
@@ -255,17 +259,18 @@ func dispatch(pool *pgxpool.Pool, todo *run, ctrl chan ctrlData) {
 					}
 				}
 
-				if newSched.Frequency > 0 {
-					log.Printf("will schedule run every %s from now on", newSched.Frequency)
-					tick.Reset(newSched.Frequency)
+				if frequency != todo.Schedule.Frequency {
+					log.Printf("will schedule run every %s from now on", todo.Schedule.Frequency)
+
+					frequency = todo.Schedule.Frequency
+					tick.Reset(frequency)
 				}
 
-				if pause != newSched.Pause {
-					log.Printf("pause is now: %v", newSched.Pause)
-					pause = newSched.Pause
+				if pause != todo.Schedule.Pause {
+					log.Printf("pause is now: %v", todo.Schedule.Pause)
+					pause = todo.Schedule.Pause
 				}
-
-				break out
+				todo.m.RUnlock()
 			}
 		}
 

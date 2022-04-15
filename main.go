@@ -130,7 +130,7 @@ func main() {
 		work = defaulWork()
 	}
 
-	control := make(chan ctrlData)
+	control := make(chan struct{})
 
 	go dispatch(p, &work, control)
 
