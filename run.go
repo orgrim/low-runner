@@ -10,6 +10,7 @@ import (
 )
 
 type run struct {
+	m        *sync.RWMutex
 	Schedule ctrlData `json:"schedule"`
 	Work     runInfo  `json:"work"`
 }
@@ -207,11 +208,13 @@ func dispatch(pool *pgxpool.Pool, todo *run, ctrl chan ctrlData) {
 
 	for {
 		if !pause {
+			todo.m.RLock()
 			for _, v := range todo.Work.Xacts {
 				for i := 0; i < numWorker; i++ {
 					go worker(pool, v, wg, res)
 				}
 			}
+			todo.m.RUnlock()
 
 			go func(c chan struct{}) {
 				wg.Wait()

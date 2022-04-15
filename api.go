@@ -1,15 +1,32 @@
 package main
 
 import (
+	"fmt"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"log"
 	"net/http"
-	"sync"
+	"time"
 )
 
+type apiRun struct {
+	Schedule apiSchedule `json:"schedule"`
+	Work     apiWork     `json:"work"`
+}
+
+type apiSchedule struct {
+	Workers   int    `json:"workers"`
+	Frequency string `json:"frequency"`
+	Pause     bool   `json:"pause"`
+}
+
+type apiWork struct {
+	Xacts []apiXact `json:"xacts"`
+}
+
 type apiXact struct {
-	Id         string   `json:"id"`
+	Id         string   `json:"id,omitempty"`
+	Outcome    string   `json:"outcome,omitempty"`
 	Statements []string `json:"statements"`
 }
 
@@ -17,8 +34,52 @@ type apiError struct {
 	Error string `json:"error"`
 }
 
+func scheduleToApiSchedule(d ctrlData) apiSchedule {
+	return apiSchedule{
+		Workers:   d.Workers,
+		Frequency: d.Frequency.String(),
+		Pause:     d.Pause,
+	}
+}
+
+func apiScheduleToSchedule(s apiSchedule) (ctrlData, error) {
+	d := ctrlData{}
+
+	f, err := time.ParseDuration(s.Frequency)
+	if err != nil {
+		return d, fmt.Errorf("invalid value for frequency")
+	}
+
+	if s.Workers < 1 {
+		return d, fmt.Errorf("workers must be greater than or equal to 1")
+	}
+
+	d.Frequency = f
+	d.Workers = s.Workers
+	d.Pause = s.Pause
+
+	return d, nil
+}
+
+func runInfoToApiWork(r runInfo, omitIds bool) apiWork {
+	w := apiWork{
+		Xacts: make([]apiXact, 0, len(r.Xacts)),
+	}
+
+	for _, v := range r.Xacts {
+		ax := xactToApiXact(v)
+		if omitIds {
+			ax.Id = ""
+		}
+
+		w.Xacts = append(w.Xacts, ax)
+	}
+
+	return w
+}
+
 func xactToApiXact(x xact) apiXact {
-	ax := apiXact{Id: x.id}
+	ax := apiXact{Id: x.id, Outcome: string(x.Outcome)}
 	stmts := make([]string, 0)
 	for _, s := range x.Statements {
 		stmts = append(stmts, s.Text)
@@ -135,19 +196,31 @@ func updateWork(c echo.Context, ctrl chan ctrlData) error {
 }
 
 func dumpRun(c echo.Context, r *run) error {
-	return c.JSON(http.StatusOK, r)
+	r.m.RLock()
+	d := apiRun{
+		Schedule: scheduleToApiSchedule(r.Schedule),
+		Work:     runInfoToApiWork(r.Work, true),
+	}
+
+	r.m.RUnlock()
+
+	return c.JSON(http.StatusOK, d)
 }
 
-func loadRun(c echo.Context, r *run, mx *sync.Mutex) error {
+func loadRun(c echo.Context, r *run, ctrl chan struct{}) error {
 	newr := run{}
 	if err := c.Bind(&newr); err != nil {
 		log.Println("could not bind input:", err)
 		return c.JSON(http.StatusBadRequest, apiError{"missing or malformed payload"})
 	}
 
+	mx := r.m
 	mx.Lock()
 	*r = newr
+	r.m = mx
 	mx.Unlock()
+
+	ctrl <- struct{}{}
 
 	return c.JSON(http.StatusOK, r)
 }
@@ -162,7 +235,6 @@ func runApi(hostPort string, todo *run, ctrl chan ctrlData) {
 	e.Use(middleware.Recover())
 
 	jobs := todo.Work
-	mx := &sync.Mutex{}
 
 	// Routes
 	e.GET("/v1/xacts", apiXactWrapHandler(getAllXacts, jobs))
@@ -175,7 +247,7 @@ func runApi(hostPort string, todo *run, ctrl chan ctrlData) {
 	e.POST("/v1/schedule", apiWorkWrapHandler(updateWork, ctrl))
 
 	e.GET("/v1/run", func(c echo.Context) error { return dumpRun(c, todo) })
-	e.POST("/v1/run", func(c echo.Context) error { return loadRun(c, todo, mx) })
+	e.POST("/v1/run", func(c echo.Context) error { return loadRun(c, todo, ctrl) })
 
 	// Start server
 	e.Logger.Fatal(e.Start(hostPort))

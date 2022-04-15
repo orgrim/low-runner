@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/pflag"
 	"log"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -92,11 +93,15 @@ func loadWorkFromFile(path string) (run, error) {
 		return run{}, fmt.Errorf("could not parse JSON from %s: %w", path, err)
 	}
 
+	r.m = &sync.RWMutex{}
+	r.Work.m = &sync.Mutex{}
+
 	return r, nil
 }
 
 func defaulWork() run {
 	return run{
+		m: &sync.RWMutex{},
 		Schedule: ctrlData{
 			Workers:   1,
 			Frequency: time.Second,
