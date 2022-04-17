@@ -286,6 +286,9 @@ func loadRun(c echo.Context, r *run, ctrl chan struct{}) error {
 func runApi(hostPort string, todo *run, ctrl chan struct{}) {
 	e := echo.New()
 
+	e.HideBanner = true
+	e.HidePort = true
+
 	// Middleware
 	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
 		Format: "${time_rfc3339} ${remote_ip} ${latency_human} ${method} ${uri} ${status} ${error}\n",
@@ -306,5 +309,6 @@ func runApi(hostPort string, todo *run, ctrl chan struct{}) {
 	e.POST("/v1/run", func(c echo.Context) error { return loadRun(c, todo, ctrl) })
 
 	// Start server
+	log.Printf("HTTP REST API listening on %s", hostPort)
 	e.Logger.Fatal(e.Start(hostPort))
 }

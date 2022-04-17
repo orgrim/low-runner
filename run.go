@@ -96,6 +96,8 @@ func dispatch(pool *pgxpool.Pool, todo *run, ctrl chan struct{}) {
 		return
 	}
 
+	log.Println("Starting xact dispatcher")
+
 	frequency := todo.Schedule.Frequency
 	pause := false
 
