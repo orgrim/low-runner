@@ -216,6 +216,13 @@ func removeXact(c echo.Context, r *run) error {
 	return c.JSON(http.StatusOK, struct{}{})
 }
 
+func getSchedule(c echo.Context, r *run) error {
+	r.m.RLock()
+	defer r.m.RUnlock()
+
+	return c.JSON(http.StatusOK, scheduleToApiSchedule(r.Schedule))
+}
+
 func updateSchedule(c echo.Context, r *run, ctrl chan struct{}) error {
 	w := apiSchedule{}
 	if err := c.Bind(&w); err != nil {
@@ -303,6 +310,7 @@ func runApi(hostPort string, todo *run, ctrl chan struct{}) {
 	e.PUT("/v1/xacts/:id", func(c echo.Context) error { return replaceXact(c, todo) })
 	e.DELETE("/v1/xacts/:id", func(c echo.Context) error { return removeXact(c, todo) })
 
+	e.GET("/v1/schedule", func(c echo.Context) error { return getSchedule(c, todo) })
 	e.POST("/v1/schedule", func(c echo.Context) error { return updateSchedule(c, todo, ctrl) })
 
 	e.GET("/v1/run", func(c echo.Context) error { return dumpRun(c, todo) })
