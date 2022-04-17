@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"github.com/jackc/pgx/v4/pgxpool"
 	"log"
@@ -21,107 +20,12 @@ type ctrlData struct {
 	Pause     bool
 }
 
-func (c ctrlData) MarshalJSON() ([]byte, error) {
-	m := struct {
-		Workers   int    `json:"workers"`
-		Frequency string `json:"frequency"`
-		Pause     bool   `json:"pause"`
-	}{
-		Workers:   c.Workers,
-		Frequency: c.Frequency.String(),
-		Pause:     c.Pause,
-	}
-
-	return json.Marshal(m)
-}
-
-func (c *ctrlData) UnmarshalJSON(data []byte) error {
-	var m map[string]interface{}
-
-	err := json.Unmarshal(data, &m)
-	if err != nil {
-		return err
-	}
-
-	for k, v := range m {
-		switch k {
-		case "workers":
-			w, ok := v.(float64)
-			if ok {
-				c.Workers = int(w)
-			} else {
-				fmt.Errorf("invalid value for workers")
-			}
-		case "frequency":
-			s, ok := v.(string)
-			if ok {
-				f, err := time.ParseDuration(s)
-				if err != nil {
-					return err
-				}
-
-				c.Frequency = f
-			} else {
-				fmt.Errorf("invalid value for frequency")
-			}
-		case "pause":
-			b, ok := v.(bool)
-			if ok {
-				c.Pause = b
-			} else {
-				fmt.Errorf("invalid value for pause")
-			}
-		default:
-			return fmt.Errorf("invalid key in JSON")
-
-		}
-	}
-
-	return nil
-}
-
 type runInfo struct {
-	m     *sync.Mutex
 	Xacts map[string]xact
-}
-
-func (r runInfo) MarshalJSON() ([]byte, error) {
-	m := struct {
-		Xacts []xact `json:"xacts"`
-	}{
-		Xacts: make([]xact, 0, len(r.Xacts)),
-	}
-
-	for _, v := range r.Xacts {
-		m.Xacts = append(m.Xacts, v)
-	}
-
-	return json.Marshal(m)
-}
-
-func (r *runInfo) UnmarshalJSON(data []byte) error {
-	var m struct {
-		Xacts []xact `json:"xacts"`
-	}
-
-	err := json.Unmarshal(data, &m)
-	if err != nil {
-		return err
-	}
-
-	r.Xacts = make(map[string]xact)
-
-	for _, v := range m.Xacts {
-		v.genSource()
-		r.Xacts[v.id] = v
-	}
-
-	return nil
 }
 
 func newRunInfo(xactList []xact) runInfo {
 	r := runInfo{
-		m:     &sync.Mutex{},
 		Xacts: make(map[string]xact),
 	}
 
@@ -147,9 +51,7 @@ func (r runInfo) add(x xact) error {
 		return fmt.Errorf("xact already exists in run list")
 	}
 
-	r.m.Lock()
 	r.Xacts[x.id] = x
-	r.m.Unlock()
 
 	return nil
 }
@@ -160,9 +62,7 @@ func (r runInfo) remove(xid string) error {
 		return fmt.Errorf("xact not found in run list")
 	}
 
-	r.m.Lock()
 	delete(r.Xacts, xid)
-	r.m.Unlock()
 
 	return nil
 }
@@ -182,10 +82,8 @@ func (r runInfo) appendXact(xid string, x xact) (xact, error) {
 	cur.genSource()
 
 	// As the id changes, the old key must be removed and a new one created
-	r.m.Lock()
 	delete(r.Xacts, xid)
 	r.Xacts[cur.id] = cur
-	r.m.Unlock()
 
 	return cur, nil
 }

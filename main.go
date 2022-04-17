@@ -87,14 +87,14 @@ func loadWorkFromFile(path string) (run, error) {
 		return run{}, fmt.Errorf("could not load file %s: %w", path, err)
 	}
 
-	var r run
+	r := run{
+		m: &sync.RWMutex{},
+	}
+
 	err = json.Unmarshal(data, &r)
 	if err != nil {
 		return run{}, fmt.Errorf("could not parse JSON from %s: %w", path, err)
 	}
-
-	r.m = &sync.RWMutex{}
-	r.Work.m = &sync.Mutex{}
 
 	return r, nil
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/sha1"
-	"encoding/json"
 	"fmt"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
@@ -36,45 +35,6 @@ type xact struct {
 
 	// Expected outcome of the transation
 	Outcome xactOutcome `json:"outcome"`
-}
-
-func (x xact) MarshalJSON() ([]byte, error) {
-	m := struct {
-		Outcome xactOutcome `json:"outcome"`
-		Sql     []string    `json:"statements"`
-	}{
-		Outcome: x.Outcome,
-		Sql:     make([]string, 0, len(x.Statements)),
-	}
-
-	for _, s := range x.Statements {
-		m.Sql = append(m.Sql, s.Text)
-	}
-
-	return json.Marshal(m)
-}
-
-func (x *xact) UnmarshalJSON(data []byte) error {
-	var m struct {
-		Outcome xactOutcome `json:"outcome"`
-		Sql     []string    `json:"statements"`
-	}
-
-	err := json.Unmarshal(data, &m)
-	if err != nil {
-		return err
-	}
-
-	x.Outcome = m.Outcome
-	x.Statements = make([]stmt, 0, len(m.Sql))
-
-	for _, v := range m.Sql {
-		x.Statements = append(x.Statements, stmt{Text: v})
-	}
-
-	x.genSource()
-
-	return nil
 }
 
 type stmt struct {

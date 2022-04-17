@@ -78,6 +78,16 @@ func runInfoToApiWork(r runInfo, omitIds bool) apiWork {
 	return w
 }
 
+func apiWorkToRunInfo(a apiWork) runInfo {
+	xl := make([]xact, 0, len(a.Xacts))
+
+	for _, ax := range a.Xacts {
+		xl = append(xl, apiXactToXact(ax))
+	}
+
+	return newRunInfo(xl)
+}
+
 func xactToApiXact(x xact) apiXact {
 	ax := apiXact{Id: x.id, Outcome: string(x.Outcome)}
 	stmts := make([]string, 0)
@@ -89,38 +99,56 @@ func xactToApiXact(x xact) apiXact {
 	return ax
 }
 
-// Wrapper to call a hanlder with a job list a parameter
-func apiXactWrapHandler(uf func(echo.Context, runInfo) error, jobs runInfo) echo.HandlerFunc {
-	return func(c echo.Context) error { return uf(c, jobs) }
+func apiXactToXact(a apiXact) xact {
+	x := newXact(a.Statements)
+
+	if a.Outcome != "" {
+		x.Outcome = xactOutcome(a.Outcome)
+		x.genSource()
+	}
+
+	return x
 }
 
-func getXact(c echo.Context, jobs runInfo) error {
+// API actions: they all get the pointer to the run to edit it, the mutex must
+// be used when reading and writing the run
+
+func getXact(c echo.Context, r *run) error {
 	id := c.Param("id")
-	x, err := jobs.get(id)
+
+	r.m.RLock()
+	defer r.m.RUnlock()
+
+	x, err := r.Work.get(id)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, apiError{err.Error()})
 	}
 
-	return c.JSON(http.StatusOK, xactToApiXact(x))
+	ax := xactToApiXact(x)
+
+	return c.JSON(http.StatusOK, ax)
 }
 
-func getAllXacts(c echo.Context, jobs runInfo) error {
-	axs := make(map[string]apiXact)
-	for k, x := range jobs.Xacts {
-		axs[k] = xactToApiXact(x)
-	}
+func getAllXacts(c echo.Context, r *run) error {
+	r.m.RLock()
+	defer r.m.RUnlock()
 
-	return c.JSON(http.StatusOK, axs)
+	return c.JSON(http.StatusOK, runInfoToApiWork(r.Work, false))
 }
 
-func addXact(c echo.Context, jobs runInfo) error {
+func addXact(c echo.Context, r *run) error {
 	ax := apiXact{}
 	if err := c.Bind(&ax); err != nil {
 		return c.JSON(http.StatusBadRequest, apiError{"missing or malformed payload"})
 	}
 
 	x := newXact(ax.Statements)
-	if err := jobs.add(x); err != nil {
+
+	r.m.Lock()
+	err := r.Work.add(x)
+	r.m.Unlock()
+
+	if err != nil {
 		return c.JSON(http.StatusConflict, apiError{err.Error()})
 	}
 
@@ -129,7 +157,7 @@ func addXact(c echo.Context, jobs runInfo) error {
 	return c.JSON(http.StatusCreated, ax)
 }
 
-func updateXact(c echo.Context, jobs runInfo) error {
+func updateXact(c echo.Context, r *run) error {
 	id := c.Param("id")
 
 	ax := apiXact{}
@@ -138,7 +166,11 @@ func updateXact(c echo.Context, jobs runInfo) error {
 	}
 
 	x := newXact(ax.Statements)
-	newX, err := jobs.appendXact(id, x)
+
+	r.m.Lock()
+	newX, err := r.Work.appendXact(id, x)
+	r.m.Unlock()
+
 	if err != nil {
 		return c.JSON(http.StatusNotFound, apiError{err.Error()})
 	}
@@ -146,7 +178,7 @@ func updateXact(c echo.Context, jobs runInfo) error {
 	return c.JSON(http.StatusOK, xactToApiXact(newX))
 }
 
-func replaceXact(c echo.Context, jobs runInfo) error {
+func replaceXact(c echo.Context, r *run) error {
 	id := c.Param("id")
 
 	ax := apiXact{}
@@ -154,12 +186,15 @@ func replaceXact(c echo.Context, jobs runInfo) error {
 		return c.JSON(http.StatusBadRequest, apiError{"missing or malformed payload"})
 	}
 
-	if err := jobs.remove(id); err != nil {
+	r.m.Lock()
+	defer r.m.Unlock()
+
+	if err := r.Work.remove(id); err != nil {
 		return c.JSON(http.StatusNotFound, apiError{err.Error()})
 	}
 
 	x := newXact(ax.Statements)
-	if err := jobs.add(x); err != nil {
+	if err := r.Work.add(x); err != nil {
 		return c.JSON(http.StatusBadRequest, apiError{err.Error()})
 	}
 
@@ -168,9 +203,13 @@ func replaceXact(c echo.Context, jobs runInfo) error {
 	return c.JSON(http.StatusOK, ax)
 }
 
-func removeXact(c echo.Context, jobs runInfo) error {
+func removeXact(c echo.Context, r *run) error {
 	id := c.Param("id")
-	if err := jobs.remove(id); err != nil {
+
+	r.m.Lock()
+	defer r.m.Unlock()
+
+	if err := r.Work.remove(id); err != nil {
 		return c.JSON(http.StatusNotFound, apiError{err.Error()})
 	}
 
@@ -213,15 +252,27 @@ func dumpRun(c echo.Context, r *run) error {
 }
 
 func loadRun(c echo.Context, r *run, ctrl chan struct{}) error {
-	newr := run{}
-	if err := c.Bind(&newr); err != nil {
+	nar := apiRun{}
+	if err := c.Bind(&nar); err != nil {
 		log.Println("could not bind input:", err)
 		return c.JSON(http.StatusBadRequest, apiError{"missing or malformed payload"})
 	}
 
+	s, err := apiScheduleToSchedule(nar.Schedule)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, apiError{fmt.Sprintf("malformed payload: %s", err)})
+	}
+
+	nr := run{
+		Schedule: s,
+		Work:     apiWorkToRunInfo(nar.Work),
+	}
+
+	// we have to keep the mutex by copying its pointer before replacing
+	// the contents of the run pointer
 	mx := r.m
 	mx.Lock()
-	*r = newr
+	*r = nr
 	r.m = mx
 	mx.Unlock()
 
@@ -230,6 +281,8 @@ func loadRun(c echo.Context, r *run, ctrl chan struct{}) error {
 	return c.JSON(http.StatusOK, r)
 }
 
+// runApi starts the echo web server after linking all api functions to api
+// endpoints
 func runApi(hostPort string, todo *run, ctrl chan struct{}) {
 	e := echo.New()
 
@@ -239,15 +292,13 @@ func runApi(hostPort string, todo *run, ctrl chan struct{}) {
 	}))
 	e.Use(middleware.Recover())
 
-	jobs := todo.Work
-
 	// Routes
-	e.GET("/v1/xacts", apiXactWrapHandler(getAllXacts, jobs))
-	e.POST("/v1/xacts", apiXactWrapHandler(addXact, jobs))
-	e.GET("/v1/xacts/:id", apiXactWrapHandler(getXact, jobs))
-	e.PATCH("/v1/xacts/:id", apiXactWrapHandler(updateXact, jobs)) // append queries
-	e.PUT("/v1/xacts/:id", apiXactWrapHandler(replaceXact, jobs))
-	e.DELETE("/v1/xacts/:id", apiXactWrapHandler(removeXact, jobs))
+	e.GET("/v1/xacts", func(c echo.Context) error { return getAllXacts(c, todo) })
+	e.POST("/v1/xacts", func(c echo.Context) error { return addXact(c, todo) })
+	e.GET("/v1/xacts/:id", func(c echo.Context) error { return getXact(c, todo) })
+	e.PATCH("/v1/xacts/:id", func(c echo.Context) error { return updateXact(c, todo) }) // append queries
+	e.PUT("/v1/xacts/:id", func(c echo.Context) error { return replaceXact(c, todo) })
+	e.DELETE("/v1/xacts/:id", func(c echo.Context) error { return removeXact(c, todo) })
 
 	e.POST("/v1/schedule", func(c echo.Context) error { return updateSchedule(c, todo, ctrl) })
 
