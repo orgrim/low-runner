@@ -35,7 +35,7 @@ func processCli(args []string) config {
 	pflag.StringVarP(&opts.apiListenAddr, "api-listen-addr", "l", ":1323", "listen address and port of the REST API (LOWRUNNER_API_LISTEN_ADDR)")
 	pflag.StringVarP(&opts.workFilePath, "work-file", "f", "", "path to a JSON file storing xacts to run at startup (LOWRUNNER_WORK_FILE)")
 	pflag.StringVarP(&opts.connstring, "db-url", "d", "", "connection string to PostgreSQL (LOWRUNNER_DB_URL)")
-	pflag.BoolVar(&opts.lazyConnect, "lazy-connect", false, "do not connect immediatly (LOWRUNNER_LAZY_CONNECT)\n")
+	pflag.BoolVar(&opts.lazyConnect, "lazy-connect", false, "do not connect immediately (LOWRUNNER_LAZY_CONNECT)\n")
 	pflag.BoolVar(&showHelp, "help", false, "print usage")
 	pflag.BoolVar(&showVersion, "version", false, "print version\n")
 

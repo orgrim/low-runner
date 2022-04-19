@@ -33,7 +33,7 @@ type xact struct {
 	// List of individual SQL statements
 	Statements []stmt `json:"statements"`
 
-	// Expected outcome of the transation
+	// Expected outcome of the transaction
 	Outcome xactOutcome `json:"outcome"`
 }
 
