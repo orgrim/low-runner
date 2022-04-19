@@ -35,6 +35,7 @@ Manage transactions:
 
 Change the schedule:
 
+* `GET /v1/schedule`: show the workers, interval or pause the loop
 * `POST /v1/schedule`: change the schedule, workers, interval or pause the loop
 
 Change a whole run (xacts and schedule):
