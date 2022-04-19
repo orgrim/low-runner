@@ -1,11 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"log"
 	"net/http"
+	"os"
+	"sync"
 	"time"
 )
 
@@ -319,4 +322,30 @@ func runApi(hostPort string, todo *run, ctrl chan struct{}) {
 	// Start server
 	log.Printf("HTTP REST API listening on %s", hostPort)
 	e.Logger.Fatal(e.Start(hostPort))
+}
+
+func loadRunFromFile(path string) (run, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return run{}, fmt.Errorf("could not load file %s: %w", path, err)
+	}
+
+	ar := apiRun{}
+	err = json.Unmarshal(data, &ar)
+	if err != nil {
+		return run{}, fmt.Errorf("could not parse JSON from %s: %w", path, err)
+	}
+
+	s, err := apiScheduleToSchedule(ar.Schedule)
+	if err != nil {
+		return run{}, fmt.Errorf("could not load schedule from file: %w", err)
+	}
+
+	r := run{
+		m:        &sync.RWMutex{},
+		Schedule: s,
+		Work:     apiWorkToRunInfo(ar.Work),
+	}
+
+	return r, nil
 }

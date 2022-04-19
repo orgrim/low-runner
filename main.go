@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"github.com/spf13/pflag"
 	"log"
@@ -81,24 +80,6 @@ func processCli(args []string) config {
 	return opts
 }
 
-func loadWorkFromFile(path string) (run, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return run{}, fmt.Errorf("could not load file %s: %w", path, err)
-	}
-
-	r := run{
-		m: &sync.RWMutex{},
-	}
-
-	err = json.Unmarshal(data, &r)
-	if err != nil {
-		return run{}, fmt.Errorf("could not parse JSON from %s: %w", path, err)
-	}
-
-	return r, nil
-}
-
 func defaulWork() run {
 	return run{
 		m: &sync.RWMutex{},
@@ -121,7 +102,7 @@ func main() {
 
 	var work run
 	if opts.workFilePath != "" {
-		work, err = loadWorkFromFile(opts.workFilePath)
+		work, err = loadRunFromFile(opts.workFilePath)
 		if err != nil {
 			log.Println(err)
 			work = defaulWork()
